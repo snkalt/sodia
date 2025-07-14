@@ -1,37 +1,44 @@
-// GET /api/posts/feed
-router.get('/feed', authenticateToken, async (req, res) => {
+const express = require('express');
+const router = express.Router();
+const verifyToken = require('../middleware/auth');
+const pool = require('../db'); // Your pg Pool instance or db module
+
+router.use(verifyToken);
+
+router.get('/feed', async (req, res) => {
   try {
     const currentUserId = req.user.id;
 
-    // Get users the current user follows
+    // Get the list of users current user follows
     const followQuery = `
       SELECT following_id FROM follows WHERE follower_id = $1
     `;
     const followsResult = await pool.query(followQuery, [currentUserId]);
 
-    // Flatten list of IDs
     const followingIds = followsResult.rows.map(row => row.following_id);
-    followingIds.push(currentUserId); // include own posts
 
-    console.log('Feed user IDs:', followingIds); // Debug
+    // Include current user's own ID to get their posts too
+    followingIds.push(currentUserId);
 
-    if (followingIds.length === 0) {
-      return res.json([]);
-    }
+    // If no following IDs (somehow), send empty array
+    if (followingIds.length === 0) return res.json([]);
 
-    // Fetch posts
+    // Fetch posts for all those users ordered by newest first
     const postQuery = `
-      SELECT posts.*, users.username 
+      SELECT posts.id, posts.content, posts.user_id, posts.created_at, users.username
       FROM posts
       JOIN users ON posts.user_id = users.id
-      WHERE user_id = ANY($1::int[])
+      WHERE posts.user_id = ANY($1::int[])
       ORDER BY posts.created_at DESC
     `;
-    const postsResult = await pool.query(postQuery, [followingIds]); // flat array
+
+    const postsResult = await pool.query(postQuery, [followingIds]);
 
     res.json(postsResult.rows);
-  } catch (err) {
-    console.error('Feed error:', err.message);
-    res.status(500).send('Server error');
+  } catch (error) {
+    console.error('Error fetching feed:', error.message);
+    res.status(500).json({ error: 'Server error' });
   }
 });
+
+module.exports = router;
