@@ -5,54 +5,48 @@ const {
   fetchFollowedPosts,
   like,
   reply,
+  getMyPosts,       // ✅ add
+  deletePost        // ✅ add
 } = require('../controllers/postController');
 
-const db = require('../db'); // your database module with query method
+const multer = require('multer');
+const multerS3 = require('multer-s3');
+const aws = require('aws-sdk');
 
 const router = express.Router();
 
-router.post('/', verifyToken, sharePost); // Share new post
-router.get('/', verifyToken, fetchFollowedPosts); // View followed posts
-router.post('/:postId/like', verifyToken, like); // Like post
-router.post('/:postId/reply', verifyToken, reply); // Reply to post
-
-// NEW ROUTE - GET /api/posts/mine - fetch posts by logged in user
-router.get('/mine', verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const result = await db.query(
-      'SELECT id, content, created_at FROM posts WHERE user_id = $1 ORDER BY created_at DESC',
-      [userId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching user posts:', err);
-    res.status(500).json({ error: 'Failed to fetch your posts' });
-  }
+// AWS S3 setup
+aws.config.update({
+  region: 'ap-south-1',
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
 });
 
-// NEW ROUTE - DELETE /api/posts/:postId - delete post by logged-in user
-router.delete('/:postId', verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const postId = req.params.postId;
+const s3 = new aws.S3();
 
-    // Check ownership
-    const check = await db.query('SELECT user_id FROM posts WHERE id = $1', [postId]);
-    if (check.rowCount === 0) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-    if (check.rows[0].user_id !== userId) {
-      return res.status(403).json({ error: 'Not authorized to delete this post' });
-    }
-
-    // Delete post
-    await db.query('DELETE FROM posts WHERE id = $1', [postId]);
-    res.json({ message: 'Post deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting post:', err);
-    res.status(500).json({ error: 'Failed to delete post' });
-  }
+const upload = multer({
+  storage: multerS3({
+    s3,
+    bucket: 'sodia-post-images',
+    acl: 'public-read',
+    metadata: function (req, file, cb) {
+      cb(null, { fieldName: file.fieldname });
+    },
+    key: function (req, file, cb) {
+      const fileName = `${Date.now().toString()}-${file.originalname}`;
+      cb(null, fileName);
+    },
+  }),
 });
+
+// Routes
+router.post('/', verifyToken, upload.single('image'), sharePost);
+router.get('/', verifyToken, fetchFollowedPosts);
+router.post('/:postId/like', verifyToken, like);
+router.post('/:postId/reply', verifyToken, reply);
+
+// ✅ ADD these routes:
+router.get('/myposts', verifyToken, getMyPosts);
+router.delete('/:id', verifyToken, deletePost);
 
 module.exports = router;
